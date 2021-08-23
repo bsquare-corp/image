@@ -31,6 +31,7 @@ type dockerAuthConfig struct {
 type dockerConfigFile struct {
 	AuthConfigs map[string]dockerAuthConfig `json:"auths"`
 	CredHelpers map[string]string           `json:"credHelpers,omitempty"`
+	CredsStore  string                      `json:"credsStore,omitempty"`
 }
 
 var (
@@ -68,7 +69,7 @@ func newAuthPathDefault(path string) authPath {
 // Returns a human-readable description of the location that was updated.
 // NOTE: The return value is only intended to be read by humans; its form is not an API,
 // it may change (or new forms can be added) any time.
-func SetCredentials(sys *types.SystemContext, key, username, password string) (string, error) {
+func SetCredentials(sys *types.SystemContext,  key, username, password string) (string, error) {
 	isNamespaced, err := validateKey(key)
 	if err != nil {
 		return "", err
@@ -93,6 +94,13 @@ func SetCredentials(sys *types.SystemContext, key, username, password string) (s
 						return false, "", unsupportedNamespaceErr(ch)
 					}
 					desc, err := setCredsInCredHelper(ch, key, username, password)
+					if err != nil {
+						return false, "", err
+					}
+					return false, desc, nil
+				}
+				if fileContents.CredsStore != "" {
+					desc, err := setCredsInCredHelper(fileContents.CredsStore, key, username, password)
 					if err != nil {
 						return false, "", err
 					}
@@ -172,6 +180,16 @@ func GetAllCredentials(sys *types.SystemContext) (map[string]types.DockerAuthCon
 						key = "docker.io"
 					}
 					allKeys.Add(key)
+				}
+				if fileContents.CredsStore != "" {
+					creds, err := listCredsInCredHelper(fileContents.CredsStore)
+					if err != nil {
+						logrus.Debugf("Error listing credentials stored in credential helper %s: %v", fileContents.CredsStore, err)
+						return nil, err
+					}
+					for registry := range creds {
+						allKeys.Add(registry)
+					}
 				}
 			}
 		// External helpers.
@@ -465,6 +483,18 @@ func RemoveAllAuthentication(sys *types.SystemContext) error {
 				}
 				fileContents.CredHelpers = make(map[string]string)
 				fileContents.AuthConfigs = make(map[string]dockerAuthConfig)
+				if fileContents.CredsStore != "" {
+					var creds map[string]string
+					if creds, err = listCredsInCredHelper(fileContents.CredsStore); err != nil {
+						return false, "", err
+					}
+					for registry := range creds {
+						err = deleteCredsFromCredHelper(fileContents.CredsStore, registry)
+						if err != nil {
+							break
+						}
+					}
+				}
 				return true, "", nil
 			})
 		// External helpers.
@@ -686,6 +716,12 @@ func findCredentialsInFile(key, registry string, path authPath) (types.DockerAut
 	if ch, exists := fileContents.CredHelpers[registry]; exists {
 		logrus.Debugf("Looking up in credential helper %s based on credHelpers entry in %s", ch, path.path)
 		return getCredsFromCredHelper(ch, registry)
+	}
+
+	if fileContents.CredsStore != "" {
+		if cred, err := getCredsFromCredHelper(fileContents.CredsStore, registry); err == nil {
+			return cred, err
+		}
 	}
 
 	// Support sub-registry namespaces in auth.
