@@ -440,7 +440,6 @@ func TestGetAuthFailsOnBadInput(t *testing.T) {
 }
 
 func TestGetAllCredentials(t *testing.T) {
-	defer withTmpHome(t)()
 	// Create a temporary authentication file.
 	tmpFile, err := os.CreateTemp("", "auth.json.")
 	require.NoError(t, err)
@@ -568,24 +567,6 @@ func TestGetAllCredentials(t *testing.T) {
 	require.Equal(t, "bar", authConfigs["registry-a.com"].Password)
 }
 
-func withTmpHome(t *testing.T) func() {
-	t.Helper()
-	dir, err := ioutil.TempDir("", "test-home")
-	if err != nil {
-		t.Fatal(err)
-		return func() {}
-	}
-	oldHome, oldHomeExists := os.LookupEnv("HOME")
-	os.Setenv("HOME", dir)
-	return func() {
-		if oldHomeExists {
-			os.Setenv("HOME", oldHome)
-		} else {
-			os.Unsetenv("HOME")
-		}
-		os.RemoveAll(dir)
-	}
-}
 
 func TestAuthKeysForKey(t *testing.T) {
 	for _, tc := range []struct {
