@@ -433,6 +433,23 @@ func RemoveAuthentication(sys *types.SystemContext, key string) error {
 				if innerHelper, exists := fileContents.CredHelpers[key]; exists {
 					removeFromCredHelper(innerHelper)
 				}
+				if fileContents.CredsStore != "" {
+					c, err := getCredsFromCredHelper(fileContents.CredsStore, key)
+					if err != nil {
+						multiErr = multierror.Append(multiErr, errors.Wrapf(err,
+							"removing credentials for %s from credential helper %s", key, fileContents.CredsStore))
+					} else {
+						if c.Username != "" || c.IdentityToken != "" {
+							err = deleteCredsFromCredHelper(fileContents.CredsStore, key)
+							if err != nil {
+								multiErr = multierror.Append(multiErr, errors.Wrapf(err,
+									"removing credentials for %s from credential helper %s", key, fileContents.CredsStore))
+							} else {
+								isLoggedIn = true
+							}
+						}
+					}
+				}
 				if _, ok := fileContents.AuthConfigs[key]; ok {
 					isLoggedIn = true
 					delete(fileContents.AuthConfigs, key)
