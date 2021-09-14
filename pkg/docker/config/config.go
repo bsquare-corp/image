@@ -436,14 +436,16 @@ func RemoveAuthentication(sys *types.SystemContext, key string) error {
 				if fileContents.CredsStore != "" {
 					c, err := getCredsFromCredHelper(fileContents.CredsStore, key)
 					if err != nil {
-						multiErr = multierror.Append(multiErr, errors.Wrapf(err,
-							"removing credentials for %s from credential helper %s", key, fileContents.CredsStore))
+						multiErr = multierror.Append(multiErr,
+							fmt.Errorf("removing credentials for %s from credential helper %s: %w", key,
+								fileContents.CredsStore, err))
 					} else {
 						if c.Username != "" || c.IdentityToken != "" {
 							err = deleteCredsFromCredHelper(fileContents.CredsStore, key)
 							if err != nil {
-								multiErr = multierror.Append(multiErr, errors.Wrapf(err,
-									"removing credentials for %s from credential helper %s", key, fileContents.CredsStore))
+								multiErr = multierror.Append(multiErr,
+									fmt.Errorf("removing credentials for %s from credential helper %s: %w", key,
+										fileContents.CredsStore, err))
 							} else {
 								isLoggedIn = true
 							}
@@ -502,7 +504,8 @@ func RemoveAllAuthentication(sys *types.SystemContext) error {
 				fileContents.AuthConfigs = make(map[string]dockerAuthConfig)
 				if fileContents.CredsStore != "" {
 					var creds map[string]string
-					if creds, err = listCredsInCredHelper(fileContents.CredsStore); err != nil {
+					creds, err = listCredsInCredHelper(fileContents.CredsStore)
+					if err != nil {
 						return false, "", err
 					}
 					for registry := range creds {
