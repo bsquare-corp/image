@@ -73,16 +73,16 @@ internet without having to change `Dockerfile`s, or to add redundancy).
 : Accepts the same format as the `prefix` field, and specifies the physical location
 of the `prefix`-rooted namespace.
 
-By default, this equal to `prefix` (in which case `prefix` can be omitted and the
+By default, this is equal to `prefix` (in which case `prefix` can be omitted and the
 `[[registry]]` TOML table can only specify `location`).
 
 Example: Given
 ```
 prefix = "example.com/foo"
-location = "internal-registry-for-example.net/bar"
+location = "internal-registry-for-example.com/bar"
 ```
 requests for the image `example.com/foo/myimage:latest` will actually work with the
-`internal-registry-for-example.net/bar/myimage:latest` image.
+`internal-registry-for-example.com/bar/myimage:latest` image.
 
 With a `prefix` containing a wildcard in the format: "*.example.com" for subdomain matching,
 the location can be empty. In such a case,
@@ -127,8 +127,9 @@ Referencing an image by digest ensures that the same is always used
 different images if the tag mapping is out of sync).
 
 
-*Note*: Redirection and mirrors are currently processed only when reading images, not when pushing
-to a registry; that may change in the future.
+*Note*: Redirection and mirrors are currently processed only when reading a single image,
+not when pushing to a registry nor when doing any other kind of lookup/search on a on a registry.
+This may change in the future.
 
 #### Short-Name Aliasing
 The use of unqualified-search registries entails an ambiguity as it is
@@ -247,7 +248,7 @@ Given the above, a pull of `example.com/foo/image:latest` will try:
 
 1. `example-mirror-0.local/mirror-for-foo/image:latest`
 2. `example-mirror-1.local/mirrors/foo/image:latest`
-3. `internal-registry-for-example.net/bar/image:latest`
+3. `internal-registry-for-example.com/bar/image:latest`
 
 in order, and use the first one that exists.
 

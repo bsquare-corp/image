@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/containers/image/v5/pkg/compression"
+	compressionTypes "github.com/containers/image/v5/pkg/compression/types"
 	"github.com/containers/image/v5/types"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -76,12 +78,15 @@ func TestOCI1EditInstances(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "something", instance.MediaType)
 	assert.Equal(t, int64(32), instance.Size)
+	// platform must match with what was set in `ociv1.image.index.json` for the first instance
+	assert.Equal(t, &imgspecv1.Platform{Architecture: "ppc64le", OS: "linux", OSVersion: "", OSFeatures: []string(nil), Variant: ""}, instance.ReadOnly.Platform)
+	assert.Equal(t, []string{compressionTypes.GzipAlgorithmName}, instance.ReadOnly.CompressionAlgorithmNames)
 
 	// Create a fresh list
 	list, err = ListFromBlob(validManifest, GuessMIMEType(validManifest))
 	require.NoError(t, err)
 
-	// Verfiy correct zstd sorting
+	// Verify correct zstd sorting
 	editInstances = []ListEdit{}
 	annotations := map[string]string{"io.github.containers.compression.zstd": "true"}
 	// without zstd
@@ -99,6 +104,23 @@ func TestOCI1EditInstances(t *testing.T) {
 		AddPlatform:    &imgspecv1.Platform{Architecture: "amd64", OS: "linux", OSFeatures: []string{"sse4"}},
 		AddAnnotations: annotations,
 		ListOperation:  ListOpAdd})
+	// with zstd but with compression, annotation must be added automatically
+	editInstances = append(editInstances, ListEdit{
+		AddDigest:                "sha256:hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+		AddSize:                  32,
+		AddMediaType:             "application/vnd.oci.image.manifest.v1+json",
+		AddPlatform:              &imgspecv1.Platform{Architecture: "amd64", OS: "linux", OSFeatures: []string{"sse4"}},
+		AddCompressionAlgorithms: []compression.Algorithm{compression.Zstd},
+		AddAnnotations:           map[string]string{},
+		ListOperation:            ListOpAdd})
+	// with zstd but with compression, annotation must be added automatically and AddAnnotations is unset
+	editInstances = append(editInstances, ListEdit{
+		AddDigest:                "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		AddSize:                  32,
+		AddMediaType:             "application/vnd.oci.image.manifest.v1+json",
+		AddPlatform:              &imgspecv1.Platform{Architecture: "amd64", OS: "linux", OSFeatures: []string{"sse4"}},
+		AddCompressionAlgorithms: []compression.Algorithm{compression.Zstd},
+		ListOperation:            ListOpAdd})
 	// without zstd
 	editInstances = append(editInstances, ListEdit{
 		AddDigest:     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -110,7 +132,31 @@ func TestOCI1EditInstances(t *testing.T) {
 	require.NoError(t, err)
 
 	// Zstd should be kept on lowest priority as compared to the default gzip ones and order of prior elements must be preserved.
-	assert.Equal(t, list.Instances(), []digest.Digest{digest.Digest("sha256:e692418e4cbaf90ca69d05a66403747baa33ee08806650b51fab815ad7fc331f"), digest.Digest("sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270"), digest.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), digest.Digest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"), digest.Digest("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")})
+	assert.Equal(t, list.Instances(), []digest.Digest{digest.Digest("sha256:e692418e4cbaf90ca69d05a66403747baa33ee08806650b51fab815ad7fc331f"), digest.Digest("sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270"), digest.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), digest.Digest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"), digest.Digest("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), digest.Digest("sha256:hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"), digest.Digest("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")})
+
+	instance, err = list.Instance(digest.Digest("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"))
+	require.NoError(t, err)
+	// Verify if annotations are preserved and correctly set in ReadOnly field.
+	assert.Equal(t, annotations, instance.ReadOnly.Annotations)
+	// Verify compression of an instance is added to the ReadOnly CompressionAlgorithmNames where compression name
+	// is internally derived from the appropriate annotations.
+	assert.Equal(t, []string{compressionTypes.ZstdAlgorithmName}, instance.ReadOnly.CompressionAlgorithmNames)
+
+	// Update list and remove zstd annotation from existing instance, and verify if resorting works
+	editInstances = []ListEdit{}
+	editInstances = append(editInstances, ListEdit{
+		UpdateOldDigest:         digest.Digest("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+		UpdateDigest:            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		UpdateSize:              32,
+		UpdateMediaType:         "application/vnd.oci.image.manifest.v1+json",
+		UpdateAffectAnnotations: true,
+		UpdateAnnotations:       map[string]string{},
+		ListOperation:           ListOpUpdate})
+	err = list.EditInstances(editInstances)
+	require.NoError(t, err)
+	// Digest `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` should be re-ordered on update.
+	assert.Equal(t, list.Instances(), []digest.Digest{digest.Digest("sha256:e692418e4cbaf90ca69d05a66403747baa33ee08806650b51fab815ad7fc331f"), digest.Digest("sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270"), digest.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), digest.Digest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"), digest.Digest("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), digest.Digest("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), digest.Digest("sha256:hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh")})
+
 }
 
 func TestOCI1IndexChooseInstanceByCompression(t *testing.T) {
@@ -169,7 +215,7 @@ func TestOCI1IndexChooseInstanceByCompression(t *testing.T) {
 		},
 		{
 			listFile: "oci1.index.zstd-selection2.json",
-			// out of list where first instance is gzip , select the first occurance of zstd out of many
+			// out of list where first instance is gzip , select the first occurrence of zstd out of many
 			matchedInstances: []expectedMatch{
 				{"amd64", "", "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", false},
 				{"amd64", "", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
@@ -177,10 +223,6 @@ func TestOCI1IndexChooseInstanceByCompression(t *testing.T) {
 				{"arm64", "", "sha256:6dc14a60d2ba724646cfbf5fccbb9a618a5978a64a352e060b17caf5e005da9d", true},
 				// must return first zstd even if the first entry for same platform is gzip
 				{"arm64", "", "sha256:1c98002b30a71b08ab175915ce7c8fb8da9e9b502ae082d6f0c572bac9dee324", false},
-				// must return first zstd instance agnostic of platform
-				{"", "", "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", false},
-				// must return first gzip instance agnostic of platform
-				{"", "", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
 				// must return first zstd instance with no platform
 				{"matchesImageWithNoPlatform", "", "sha256:f2f5f52a2cf2c51d4cac6df0545f751c0adc3f3427eb47c59fcb32894503e18f", false},
 				// must return first gzip instance with no platform
