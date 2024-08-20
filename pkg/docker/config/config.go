@@ -325,7 +325,7 @@ func SetCredentials(sys *types.SystemContext, key, username, password string) (s
 	}
 
 	// Make sure to collect all errors.
-	var multiErr error
+	var multiErr []error
 	for _, helper := range helpers {
 		var desc string
 		var err error
@@ -429,14 +429,14 @@ func RemoveAuthentication(sys *types.SystemContext, key string) error {
 				if fileContents.CredsStore != "" {
 					c, err := getCredsFromCredHelper(fileContents.CredsStore, key)
 					if err != nil {
-						multiErr = multierror.Append(multiErr,
+						multiErr = append(multiErr,
 							fmt.Errorf("removing credentials for %s from credential helper %s: %w", key,
 								fileContents.CredsStore, err))
 					} else {
 						if c.Username != "" || c.IdentityToken != "" {
 							err = deleteCredsFromCredHelper(fileContents.CredsStore, key)
 							if err != nil {
-								multiErr = multierror.Append(multiErr,
+								multiErr = append(multiErr,
 									fmt.Errorf("removing credentials for %s from credential helper %s: %w", key,
 										fileContents.CredsStore, err))
 							} else {
