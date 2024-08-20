@@ -10,7 +10,6 @@ import (
 
 	"github.com/containers/image/v5/directory"
 	"github.com/containers/image/v5/docker"
-	"golang.org/x/exp/maps"
 
 	// this import is needed  where we use the "atomic" transport in TestPolicyUnmarshalJSON
 	_ "github.com/containers/image/v5/openshift"
@@ -296,10 +295,10 @@ func addExtraJSONMember(t *testing.T, encoded []byte, name string, extra any) []
 	extraJSON, err := json.Marshal(extra)
 	require.NoError(t, err)
 
-	require.True(t, bytes.HasSuffix(encoded, []byte("}")))
-	preservedLen := len(encoded) - 1
+	preserved, ok := bytes.CutSuffix(encoded, []byte("}"))
+	require.True(t, ok)
 
-	res := bytes.Join([][]byte{encoded[:preservedLen], []byte(`,"`), []byte(name), []byte(`":`), extraJSON, []byte("}")}, nil)
+	res := bytes.Join([][]byte{preserved, []byte(`,"`), []byte(name), []byte(`":`), extraJSON, []byte("}")}, nil)
 	// Verify that the result is valid JSON, as a sanity check that we are actually triggering
 	// the “duplicate member” case in the caller.
 	var raw map[string]any
@@ -586,7 +585,7 @@ func TestPolicyTransportScopesWithTransportUnmarshalJSON(t *testing.T) {
 		// The "" scope is missing
 		func(v mSA) { delete(v, "") },
 		// The policy is completely empty
-		func(v mSA) { maps.Clear(v) },
+		func(v mSA) { clear(v) },
 	}
 	for _, fn := range allowedModificationFns {
 		err = tryUnmarshalModifiedPTS(t, &pts, docker.Transport, validJSON, fn)

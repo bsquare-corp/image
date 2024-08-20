@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 const commonFixtureConfigDigest = "sha256:9ca4bda0a6b3727a6ffcc43e981cad0f24e2ec79d338f6ba325b4dfd0756fb8f"
@@ -448,7 +448,7 @@ func TestManifestSchema2UpdatedImage(t *testing.T) {
 	original := manifestSchema2FromFixture(t, originalSrc, "schema2.json", false)
 
 	// LayerInfos:
-	layerInfos := append(original.LayerInfos()[1:], original.LayerInfos()[0])
+	layerInfos := append(slices.Clone(original.LayerInfos()[1:]), original.LayerInfos()[0])
 	res, err := original.UpdatedImage(context.Background(), types.ManifestUpdateOptions{
 		LayerInfos: layerInfos,
 	})

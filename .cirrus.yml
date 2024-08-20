@@ -29,14 +29,8 @@ env:
     # test changes made there, in a PR in this repository.
     SKOPEO_PR:
 
-    ####
-    #### Cache-image names to test with (double-quotes around names are critical)
-    ####
-    FEDORA_NAME: "fedora-38"
-    DEBIAN_NAME: "debian-13"
-
     # Google-cloud VM Images
-    IMAGE_SUFFIX: "c20230816t191118z-f38f37d13"
+    IMAGE_SUFFIX: "c20240529t141726z-f40f39d13"
     FEDORA_CACHE_IMAGE_NAME: "fedora-${IMAGE_SUFFIX}"
     DEBIAN_CACHE_IMAGE_NAME: "debian-${IMAGE_SUFFIX}"
 

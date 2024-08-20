@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -372,7 +373,7 @@ func TestManifestSchema1UpdatedImage(t *testing.T) {
 	original := manifestSchema1FromFixture(t, "schema1.json")
 
 	// LayerInfos:
-	layerInfos := append(original.LayerInfos()[1:], original.LayerInfos()[0])
+	layerInfos := append(slices.Clone(original.LayerInfos()[1:]), original.LayerInfos()[0])
 	res, err := original.UpdatedImage(context.Background(), types.ManifestUpdateOptions{
 		LayerInfos: layerInfos,
 	})

@@ -79,13 +79,7 @@ var _ json.Unmarshaler = (*UntrustedSigstorePayload)(nil)
 
 // UnmarshalJSON implements the json.Unmarshaler interface
 func (s *UntrustedSigstorePayload) UnmarshalJSON(data []byte) error {
-	err := s.strictUnmarshalJSON(data)
-	if err != nil {
-		if formatErr, ok := err.(JSONFormatError); ok {
-			err = NewInvalidSignatureError(formatErr.Error())
-		}
-	}
-	return err
+	return JSONFormatToInvalidSignatureError(s.strictUnmarshalJSON(data))
 }
 
 // strictUnmarshalJSON is UnmarshalJSON, except that it may return the internal JSONFormatError error type.
@@ -126,7 +120,7 @@ func (s *UntrustedSigstorePayload) strictUnmarshalJSON(data []byte) error {
 	if gotTimestamp {
 		intTimestamp := int64(timestamp)
 		if float64(intTimestamp) != timestamp {
-			return NewInvalidSignatureError("Field optional.timestamp is not is not an integer")
+			return NewInvalidSignatureError("Field optional.timestamp is not an integer")
 		}
 		s.untrustedTimestamp = &intTimestamp
 	}
@@ -150,7 +144,11 @@ func (s *UntrustedSigstorePayload) strictUnmarshalJSON(data []byte) error {
 	}); err != nil {
 		return err
 	}
-	s.untrustedDockerManifestDigest = digest.Digest(digestString)
+	digestValue, err := digest.Parse(digestString)
+	if err != nil {
+		return NewInvalidSignatureError(fmt.Sprintf(`invalid docker-manifest-digest value %q: %v`, digestString, err))
+	}
+	s.untrustedDockerManifestDigest = digestValue
 
 	return ParanoidUnmarshalJSONObjectExactFields(identity, map[string]any{
 		"docker-reference": &s.untrustedDockerReference,

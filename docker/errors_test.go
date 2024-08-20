@@ -43,7 +43,7 @@ func TestRegistryHTTPResponseToError(t *testing.T) {
 				"Header1: Value1\r\n" +
 				"\r\n" +
 				"<html><body>JSON? What JSON?</body></html>\r\n",
-			errorString:       "StatusCode: 400, <html><body>JSON? What JSON?</body></html>\r\n",
+			errorString:       `StatusCode: 400, "<html><body>JSON? What JSON?</body></html>\r\n"`,
 			errorType:         nil,
 			unwrappedErrorPtr: &unwrappedUnexpectedHTTPResponseError,
 		},
@@ -161,7 +161,7 @@ func TestRegistryHTTPResponseToError(t *testing.T) {
 				"X-Docker-Size: -1\r\n" +
 				"\r\n" +
 				"Not found\r\n",
-			errorString:       "StatusCode: 404, Not found\r",
+			errorString:       `StatusCode: 404, "Not found\r"`,
 			errorType:         nil,
 			unwrappedErrorPtr: &unwrappedUnexpectedHTTPResponseError,
 			fn: func(t *testing.T, err error) {
@@ -171,6 +171,34 @@ func TestRegistryHTTPResponseToError(t *testing.T) {
 				// isManifestUnknownError is checking for this
 				assert.Equal(t, 404, e.StatusCode)
 				assert.Equal(t, []byte("Not found\r"), e.Response)
+			},
+		},
+		{ // Harbor v2.10.2 uses an unspecified NOT_FOUND error code
+			name: "Harbor v2.10.2 manifest not found",
+			response: "HTTP/1.1 404 Not Found\r\n" +
+				"Content-Length: 153\r\n" +
+				"Connection: keep-alive\r\n" +
+				"Content-Type: application/json; charset=utf-8\r\n" +
+				"Date: Wed, 08 May 2024 08:14:59 GMT\r\n" +
+				"Server: nginx\r\n" +
+				"Set-Cookie: sid=f617c257877837614ada2561513d6827; Path=/; HttpOnly\r\n" +
+				"X-Request-Id: 1b151fb1-c943-4190-a9ce-5156ed5e3200\r\n" +
+				"\r\n" +
+				"{\"errors\":[{\"code\":\"NOT_FOUND\",\"message\":\"artifact test/alpine:sha256-443205b0cfcc78444321d56a2fe273f06e27b2c72b5058f8d7e975997d45b015.sig not found\"}]}\n",
+			errorString:       "unknown: artifact test/alpine:sha256-443205b0cfcc78444321d56a2fe273f06e27b2c72b5058f8d7e975997d45b015.sig not found",
+			errorType:         errcode.Error{},
+			unwrappedErrorPtr: &unwrappedErrcodeError,
+			errorCode:         &errcode.ErrorCodeUnknown,
+			fn: func(t *testing.T, err error) {
+				var e errcode.Error
+				ok := errors.As(err, &e)
+				require.True(t, ok)
+				// isManifestUnknownError is checking for this
+				assert.Equal(t, errcode.Error{
+					Code:    errcode.ErrorCodeUnknown, // The NOT_FOUND value is not defined, and turns into Unknown
+					Message: "artifact test/alpine:sha256-443205b0cfcc78444321d56a2fe273f06e27b2c72b5058f8d7e975997d45b015.sig not found",
+					Detail:  nil,
+				}, e)
 			},
 		},
 	} {

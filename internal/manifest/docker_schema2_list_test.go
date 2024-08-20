@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	compressionTypes "github.com/containers/image/v5/pkg/compression/types"
@@ -81,11 +82,11 @@ func TestSchema2ListEditInstances(t *testing.T) {
 	err = list.EditInstances(editInstances)
 	require.NoError(t, err)
 
-	// Add new elements to the end of old list to maintain order
-	originalListOrder = append(originalListOrder, digest.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
-	originalListOrder = append(originalListOrder, digest.Digest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"))
-	// Verify order
-	assert.Equal(t, list.Instances(), originalListOrder)
+	// Verify new elements are added to the end of old list
+	assert.Equal(t, append(slices.Clone(originalListOrder),
+		digest.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		digest.Digest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+	), list.Instances())
 }
 
 func TestSchema2ListFromManifest(t *testing.T) {
@@ -105,4 +106,16 @@ func TestSchema2ListFromManifest(t *testing.T) {
 	})
 	// Extra fields are rejected
 	testValidManifestWithExtraFieldsIsRejected(t, parser, validManifest, []string{"config", "fsLayers", "history", "layers"})
+}
+
+func TestSchema2ListCloneInternal(t *testing.T) {
+	// This fixture should be kept updated to have all known fields set to non-empty values
+	blob, err := os.ReadFile(filepath.Join("testdata", "v2list.everything.json"))
+	require.NoError(t, err)
+	m, err := Schema2ListFromManifest(blob)
+	require.NoError(t, err)
+	clone_ := m.CloneInternal()
+	clone, ok := clone_.(*Schema2List)
+	require.True(t, ok)
+	assert.Equal(t, m.Schema2ListPublic, clone.Schema2ListPublic)
 }

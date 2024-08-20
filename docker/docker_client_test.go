@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,72 +93,62 @@ func TestDockerCertDir(t *testing.T) {
 	}
 }
 
-func TestNewBearerTokenFromJsonBlob(t *testing.T) {
-	expected := &bearerToken{Token: "IAmAToken", ExpiresIn: 100, IssuedAt: time.Unix(1514800802, 0)}
-	tokenBlob := []byte(`{"token":"IAmAToken","expires_in":100,"issued_at":"2018-01-01T10:00:02+00:00"}`)
-	token, err := newBearerTokenFromJSONBlob(tokenBlob)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	assertBearerTokensEqual(t, expected, token)
-}
-
-func TestNewBearerAccessTokenFromJsonBlob(t *testing.T) {
-	expected := &bearerToken{Token: "IAmAToken", ExpiresIn: 100, IssuedAt: time.Unix(1514800802, 0)}
-	tokenBlob := []byte(`{"access_token":"IAmAToken","expires_in":100,"issued_at":"2018-01-01T10:00:02+00:00"}`)
-	token, err := newBearerTokenFromJSONBlob(tokenBlob)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	assertBearerTokensEqual(t, expected, token)
-}
-
-func TestNewBearerTokenFromInvalidJsonBlob(t *testing.T) {
-	tokenBlob := []byte("IAmNotJson")
-	_, err := newBearerTokenFromJSONBlob(tokenBlob)
-	if err == nil {
-		t.Fatalf("unexpected an error unmarshaling JSON")
+// testTokenHTTPResponse creates just enough of a *http.Response to work with newBearerTokenFromHTTPResponseBody.
+func testTokenHTTPResponse(t *testing.T, body string) *http.Response {
+	requestURL, err := url.Parse("https://example.com/token")
+	require.NoError(t, err)
+	return &http.Response{
+		Body: io.NopCloser(bytes.NewReader([]byte(body))),
+		Request: &http.Request{
+			Method: "",
+			URL:    requestURL,
+		},
 	}
 }
 
-func TestNewBearerTokenSmallExpiryFromJsonBlob(t *testing.T) {
-	expected := &bearerToken{Token: "IAmAToken", ExpiresIn: 60, IssuedAt: time.Unix(1514800802, 0)}
-	tokenBlob := []byte(`{"token":"IAmAToken","expires_in":1,"issued_at":"2018-01-01T10:00:02+00:00"}`)
-	token, err := newBearerTokenFromJSONBlob(tokenBlob)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestNewBearerTokenFromHTTPResponseBody(t *testing.T) {
+	for _, c := range []struct {
+		input    string
+		expected *bearerToken // or nil if a failure is expected
+	}{
+		{ // Invalid JSON
+			input:    "IAmNotJson",
+			expected: nil,
+		},
+		{ // "token"
+			input:    `{"token":"IAmAToken","expires_in":100,"issued_at":"2018-01-01T10:00:02+00:00"}`,
+			expected: &bearerToken{token: "IAmAToken", expirationTime: time.Unix(1514800802+100, 0)},
+		},
+		{ // "access_token"
+			input:    `{"access_token":"IAmAToken","expires_in":100,"issued_at":"2018-01-01T10:00:02+00:00"}`,
+			expected: &bearerToken{token: "IAmAToken", expirationTime: time.Unix(1514800802+100, 0)},
+		},
+		{ // Small expiry
+			input:    `{"token":"IAmAToken","expires_in":1,"issued_at":"2018-01-01T10:00:02+00:00"}`,
+			expected: &bearerToken{token: "IAmAToken", expirationTime: time.Unix(1514800802+60, 0)},
+		},
+	} {
+		token, err := newBearerTokenFromHTTPResponseBody(testTokenHTTPResponse(t, c.input))
+		if c.expected == nil {
+			assert.Error(t, err, c.input)
+		} else {
+			require.NoError(t, err, c.input)
+			assert.Equal(t, c.expected.token, token.token, c.input)
+			assert.True(t, c.expected.expirationTime.Equal(token.expirationTime),
+				"expected [%s] to equal [%s], it did not", token.expirationTime, c.expected.expirationTime)
+		}
 	}
-
-	assertBearerTokensEqual(t, expected, token)
 }
 
-func TestNewBearerTokenIssuedAtZeroFromJsonBlob(t *testing.T) {
+func TestNewBearerTokenFromHTTPResponseBodyIssuedAtZero(t *testing.T) {
 	zeroTime := time.Time{}.Format(time.RFC3339)
 	now := time.Now()
-	tokenBlob := []byte(fmt.Sprintf(`{"token":"IAmAToken","expires_in":100,"issued_at":"%s"}`, zeroTime))
-	token, err := newBearerTokenFromJSONBlob(tokenBlob)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if token.IssuedAt.Before(now) {
-		t.Fatalf("expected [%s] not to be before [%s]", token.IssuedAt, now)
-	}
-
-}
-
-func assertBearerTokensEqual(t *testing.T, expected, subject *bearerToken) {
-	if expected.Token != subject.Token {
-		t.Fatalf("expected [%s] to equal [%s], it did not", subject.Token, expected.Token)
-	}
-	if expected.ExpiresIn != subject.ExpiresIn {
-		t.Fatalf("expected [%d] to equal [%d], it did not", subject.ExpiresIn, expected.ExpiresIn)
-	}
-	if !expected.IssuedAt.Equal(subject.IssuedAt) {
-		t.Fatalf("expected [%s] to equal [%s], it did not", subject.IssuedAt, expected.IssuedAt)
-	}
+	tokenBlob := fmt.Sprintf(`{"token":"IAmAToken","expires_in":100,"issued_at":"%s"}`, zeroTime)
+	token, err := newBearerTokenFromHTTPResponseBody(testTokenHTTPResponse(t, tokenBlob))
+	require.NoError(t, err)
+	expectedExpiration := now.Add(time.Duration(100) * time.Second)
+	require.False(t, token.expirationTime.Before(expectedExpiration),
+		"expected [%s] not to be before [%s]", token.expirationTime, expectedExpiration)
 }
 
 func TestUserAgent(t *testing.T) {
@@ -192,13 +183,6 @@ func TestUserAgent(t *testing.T) {
 	}
 }
 
-func TestNeedsRetryOnError(t *testing.T) {
-	needsRetry, _ := needsRetryWithUpdatedScope(errors.New("generic"), nil)
-	if needsRetry {
-		t.Fatal("Got needRetry for a connection that included an error")
-	}
-}
-
 var registrySuseComResp = http.Response{
 	Status:     "401 Unauthorized",
 	StatusCode: http.StatusUnauthorized,
@@ -227,7 +211,7 @@ func TestNeedsRetryOnInsuficientScope(t *testing.T) {
 		actions:      "*",
 	}
 
-	needsRetry, scope := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, scope := needsRetryWithUpdatedScope(&resp)
 
 	if !needsRetry {
 		t.Fatal("Expected needing to retry")
@@ -242,7 +226,7 @@ func TestNeedsRetryNoRetryWhenNoAuthHeader(t *testing.T) {
 	resp := registrySuseComResp
 	delete(resp.Header, "Www-Authenticate")
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 
 	if needsRetry {
 		t.Fatal("Expected no need to retry, as no Authentication headers are present")
@@ -255,7 +239,7 @@ func TestNeedsRetryNoRetryWhenNoBearerAuthHeader(t *testing.T) {
 		`OAuth2 realm="https://registry.suse.com/auth",service="SUSE Linux Docker Registry",scope="registry:catalog:*"`,
 	}
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 
 	if needsRetry {
 		t.Fatal("Expected no need to retry, as no bearer authentication header is present")
@@ -268,7 +252,7 @@ func TestNeedsRetryNoRetryWhenNoErrorInBearer(t *testing.T) {
 		`Bearer realm="https://registry.suse.com/auth",service="SUSE Linux Docker Registry",scope="registry:catalog:*"`,
 	}
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 
 	if needsRetry {
 		t.Fatal("Expected no need to retry, as no insufficient error is present in the authentication header")
@@ -281,7 +265,7 @@ func TestNeedsRetryNoRetryWhenInvalidErrorInBearer(t *testing.T) {
 		`Bearer realm="https://registry.suse.com/auth",service="SUSE Linux Docker Registry",scope="registry:catalog:*,error="random_error"`,
 	}
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 
 	if needsRetry {
 		t.Fatal("Expected no need to retry, as no insufficient_error is present in the authentication header")
@@ -294,7 +278,7 @@ func TestNeedsRetryNoRetryWhenInvalidScope(t *testing.T) {
 		`Bearer realm="https://registry.suse.com/auth",service="SUSE Linux Docker Registry",scope="foo:bar",error="insufficient_scope"`,
 	}
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 
 	if needsRetry {
 		t.Fatal("Expected no need to retry, as no insufficient_error is present in the authentication header")
@@ -326,7 +310,7 @@ func TestNeedsNoRetry(t *testing.T) {
 		},
 	}
 
-	needsRetry, _ := needsRetryWithUpdatedScope(nil, &resp)
+	needsRetry, _ := needsRetryWithUpdatedScope(&resp)
 	if needsRetry {
 		t.Fatal("Got the need to retry, but none should be required")
 	}
@@ -400,6 +384,19 @@ func TestIsManifestUnknownError(t *testing.T) {
 				"\r\n" +
 				"Not found\r\n",
 		},
+		{
+			name: "Harbor v2.10.2",
+			response: "HTTP/1.1 404 Not Found\r\n" +
+				"Content-Length: 153\r\n" +
+				"Connection: keep-alive\r\n" +
+				"Content-Type: application/json; charset=utf-8\r\n" +
+				"Date: Wed, 08 May 2024 08:14:59 GMT\r\n" +
+				"Server: nginx\r\n" +
+				"Set-Cookie: sid=f617c257877837614ada2561513d6827; Path=/; HttpOnly\r\n" +
+				"X-Request-Id: 1b151fb1-c943-4190-a9ce-5156ed5e3200\r\n" +
+				"\r\n" +
+				"{\"errors\":[{\"code\":\"NOT_FOUND\",\"message\":\"artifact test/alpine:sha256-443205b0cfcc78444321d56a2fe273f06e27b2c72b5058f8d7e975997d45b015.sig not found\"}]}\n",
+		},
 	} {
 		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader([]byte(c.response))), nil)
 		require.NoError(t, err, c.name)
@@ -407,6 +404,6 @@ func TestIsManifestUnknownError(t *testing.T) {
 		err = fmt.Errorf("wrapped: %w", registryHTTPResponseToError(resp))
 
 		res := isManifestUnknownError(err)
-		assert.True(t, res, "%#v", err, c.name)
+		assert.True(t, res, "%s: %#v", c.name, err)
 	}
 }
