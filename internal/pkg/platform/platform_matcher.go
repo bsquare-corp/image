@@ -217,7 +217,7 @@ func WantedPlatforms(ctx *types.SystemContext) ([]imgspecv1.Platform, error) {
 // MatchesPlatform returns true if a platform descriptor from a multi-arch image matches
 // an item from the return value of WantedPlatforms.
 func MatchesPlatform(image imgspecv1.Platform, wanted imgspecv1.Platform) bool {
-	return image.Architecture == wanted.Architecture &&
-		image.OS == wanted.OS &&
-		image.Variant == wanted.Variant
+	return (image.Architecture == wanted.Architecture || wanted.Architecture == "any") &&
+		(image.OS == wanted.OS || wanted.OS == "any") &&
+		(image.Variant == wanted.Variant || wanted.Variant == "any")
 }
